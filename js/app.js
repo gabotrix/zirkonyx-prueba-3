@@ -51,7 +51,8 @@
   function solicitudVacia() {
     return {
       animal: "", nombre: "", cedula: "", celular: "", correo: "", barrio: "",
-      vivienda: "", otros: "", cuales: "", porque: ""
+      vivienda: "", otros: "", cuales: "", porque: "",
+      web: "" // campo oculto contra spam: una persona lo deja vacío
     };
   }
 
@@ -361,6 +362,9 @@
             '<textarea class="inp" id="s-porque" name="porque" data-campo="porque" placeholder="Cuéntanos por qué quieres darle un hogar a ' + esc(a.nombre) + '" required aria-describedby="e-porque">' + esc(solicitud.porque) + "</textarea>" +
             '<p class="err" id="e-porque"></p></div>' +
         "</div>" +
+        // Campo contra spam: no se ve ni se puede enfocar; si llega lleno, el script descarta la solicitud
+        '<div class="sr" aria-hidden="true"><label for="s-web">Deja este campo vacío</label>' +
+          '<input id="s-web" name="web" data-campo="web" type="text" tabindex="-1" autocomplete="off" value=""></div>' +
         '<p class="nota">' + ico("correo", 15, "#D9653B", "vertical-align:-2px") + " Tu solicitud llega a <b>" + CORREO + "</b>. Usamos tus datos solo para la adopción.</p>" +
         '<div class="aviso-error" id="error-envio" role="alert" hidden></div>' +
         '<div class="nav2">' +
@@ -384,7 +388,7 @@
       '<div class="ok">' +
         '<div class="big">' + ico("chulo", 48, "#fff") + "</div>" +
         "<h1>¡Solicitud enviada!</h1>" +
-        "<p>" + texto + " En los próximos días te llamaremos para conocerte y coordinar una visita.</p>" +
+        "<p>" + texto + " También te enviamos un correo de confirmación. En los próximos días te llamaremos para conocerte y coordinar una visita.</p>" +
         '<div class="acts"><a class="btn b1" href="#inicio">Volver al inicio</a><a class="btn b3" href="#adopta">Ver más animales</a></div>' +
       "</div>" +
     "</div></section>";
@@ -436,13 +440,37 @@
   }
 
   /*
-    Envío de la solicitud.
-    Etapa 1: todavía no sale a ningún lado; responde bien de inmediato.
-    Etapa 2: aquí va el envío al correo (y luego a la hoja de seguimiento).
-    Debe devolver una promesa que se cumple si el envío salió bien y falla si no.
+    Envío de la solicitud al Google Apps Script de la Fundación (apps-script/solicitudes.js),
+    que manda el aviso a adopciones@huellasdecaldas.org y la confirmación a la persona.
+    La dirección está en js/config.js (SOLICITUDES_URL).
+    Se manda como text/plain con JSON para que el navegador no la bloquee (CORS).
+    Devuelve una promesa que se cumple si el envío salió bien y falla si no.
   */
+  var ESPERA_MAXIMA = 30000; // milisegundos
+
   function enviarSolicitud(datos) {
-    return Promise.resolve(datos);
+    var url = typeof SOLICITUDES_URL === "string" ? SOLICITUDES_URL.trim() : "";
+    if (!url || !window.fetch) return Promise.reject(new Error("Sin dirección de envío"));
+
+    var control = window.AbortController ? new AbortController() : null;
+    var reloj = control ? setTimeout(function () { control.abort(); }, ESPERA_MAXIMA) : null;
+
+    return fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(datos),
+      signal: control ? control.signal : undefined
+    }).then(function (res) {
+      if (!res.ok) throw new Error("Respuesta " + res.status);
+      return res.json();
+    }).then(function (r) {
+      if (reloj) clearTimeout(reloj);
+      if (!r || r.ok !== true) throw new Error((r && r.error) || "No se pudo enviar");
+      return r;
+    }, function (err) {
+      if (reloj) clearTimeout(reloj);
+      throw err;
+    });
   }
 
   function enviar(form, a) {
